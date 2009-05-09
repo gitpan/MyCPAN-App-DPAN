@@ -2,14 +2,14 @@ package MyCPAN::App::DPAN;
 use strict;
 use warnings;
 
-use base qw( MyCPAN::App::BackPAN::Indexer );
+use base qw( MyCPAN::App::Indexer::DPAN );
 use vars qw($VERSION);
 
 use Cwd qw(cwd);
 use File::Temp qw(tempdir);
 use File::Spec::Functions qw(catfile);
 
-$VERSION = '1.18_03';
+$VERSION = '1.18_04';
 
 BEGIN {
 my $cwd = cwd();

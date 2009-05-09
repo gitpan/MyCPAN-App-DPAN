@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               MyCPAN-App-DPAN
-version:            1.18_03
+version:            1.18_04
 abstract:           Create a custom, private DarkPAN repository that looks just like a real CPAN
 author:
     - brian d foy <bdfoy@cpan.org>
