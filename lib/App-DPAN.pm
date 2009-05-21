@@ -11,7 +11,7 @@ use File::Temp qw(tempdir);
 use File::Spec::Functions qw(catfile);
 use Log::Log4perl;
 
-$VERSION = '1.21';
+$VERSION = '1.22';
 
 BEGIN {
 my $cwd = cwd();
@@ -22,7 +22,7 @@ my %Defaults = (
 	indexer_class         => 'MyCPAN::App::Indexer::DPAN',
 	reporter_class        => 'MyCPAN::App::Indexer::DPAN',
 	parallel_jobs         => 1,
-	organize_dists        => 1,
+	organize_dists        => 0,
 	pause_id              => 'DPAN',
 	);
 

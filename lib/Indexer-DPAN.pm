@@ -14,9 +14,9 @@ use Cwd qw(cwd);
 use File::Basename qw(dirname);
 use File::Path qw(mkpath);
 use File::Temp qw(tempdir);
-use File::Spec::Functions qw(catfile);
+use File::Spec::Functions qw(catfile rel2abs);
 
-$VERSION = '1.21';
+$VERSION = '1.22';
 
 =head1 NAME
 
@@ -78,8 +78,6 @@ sub examine_dist_steps
 		[ 'find_dist_dir',      "Did not find distro directory!",    1 ],
 		[ 'find_modules',       "Could not find modules!",           1 ],
 		[ 'examine_modules',    "Could not process modules!",        0 ],
-		[ 'find_tests',         "Could not find tests!",             0 ],
-		[ 'examine_tests',      "Could not process tests!",          0 ],
 		);
 	}
 
@@ -113,7 +111,7 @@ sub get_module_info_tasks
 	{
 	(
 	[ 'extract_module_namespaces',   'Extract the namespaces a file declares' ],
-	[ 'extract_module_version',       'Extract the version of the module'     ],
+	[ 'extract_module_version',      'Extract the version of the module'      ],
 	)
 	}
 
@@ -128,10 +126,6 @@ so the details about the run aren't as interesting.
 sub setup_run_info
 	{
 #	TRACE( sub { get_caller_info } );
-
-	require Config;
-
-	my $perl = Probe::Perl->new;
 
 	$_[0]->set_run_info( 'root_working_dir', cwd()   );
 	$_[0]->set_run_info( 'run_start_time',   time    );
@@ -267,7 +261,8 @@ been the version for another package. For example:
 					}
 
 				# broken crap that works on Unix and Windows to make cpanp
-				# happy.
+				# happy. It assumes that authors/id/ is in front of the path
+				# in 02paackages
 				( my $path = $dist_file ) =~ s/.*authors.id.//g;
 
 				$path =~ s|\\+|/|g; # no windows paths.
@@ -287,32 +282,38 @@ been the version for another package. For example:
 			}
 		}
 
-	my $dir = do {
+	my $index_dir = do {
 		my $d = $Notes->{config}->backpan_dir;
-		ref $d ? $d->[0] : $d;
+		
+		# there might be more than one if we pull from multiple sources
+		# so make the index in the first one.
+		my $abs = rel2abs( ref $d ? $d->[0] : $d );
+		$abs =~ s/authors.id.*//;
+		catfile( $abs, 'modules' );
 		};
-
-	( my $packages_dir = $dir ) =~ s/authors.id.*//;
-	$reporter_logger->debug( "package details directory is [$packages_dir]");
-
-	my $index_dir     = catfile( $packages_dir, 'modules' );
-	mkpath( $index_dir );
+	
+	mkpath( $index_dir ) unless -d $index_dir;
 
 	my $packages_file = catfile( $index_dir, '02packages.details.txt.gz' );
-	$reporter_logger->debug( "package details file is [$packages_file]");
 
+	$reporter_logger->info( "Writing 02packages.details.txt.gz" );	
 	$package_details->write_file( $packages_file );
 
+	$reporter_logger->info( "Writing 03modlist.txt.gz" );	
 	$class->create_modlist( $index_dir );
 
+	$reporter_logger->info( "Creating CHECKSUMS files" );	
 	$class->create_checksums( [ keys %dirs_needing_checksums ] );
 
+	1;
 	}
 
 =item guess_package_name
 
 Given information about the module, make a guess about which package
 is the primary one. This is
+
+NOT YET IMPLEMENTED
 
 =cut
 
@@ -329,7 +330,9 @@ Get the $VERSION associated with PACKAGE. You probably want to use
 C<guess_package_name> first to figure out which package is the
 primary one that you should index.
 
-=cut
+NOT YET IMPLEMENTED
+
+=cut                                    
 
 sub get_package_version
 	{
@@ -353,11 +356,14 @@ There isn't a way to configure additional packages yet.
 
 =cut
 
+{
+my %skip_packages = map { $_, 1 } qw(main MY MM DB bytes);
+
 sub skip_package
 	{
-
-
+	exists $skip_packages{ $_[1] }
 	}
+}
 
 =item create_package_details
 
@@ -367,12 +373,12 @@ here.
 =cut
 
 sub create_package_details
-      {
-      my( $self, $index_dir ) = @_;
+    {
+    my( $self, $index_dir ) = @_;
 
 
-      1;
-      }
+    1;
+    }
 
 =item create_modlist
 
