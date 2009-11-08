@@ -1,14 +1,14 @@
-package MyCPAN::App::Indexer::DPAN;
+package MyCPAN::App::DPAN::Reporter::AsYAML;
 use strict;
 use warnings;
 
 use subs qw(get_caller_info);
-use vars qw($VERSION $indexer_logger $reporter_logger);
+use vars qw($VERSION $logger);
 
 # don't change the inheritance order
 # this should be done with roles, but we don't quite have that yet
 # it's a problem with who's cleanup() get called
-use base qw(MyCPAN::App::BackPAN::Indexer MyCPAN::Indexer MyCPAN::Indexer::Reporter::AsYAML);
+use base qw(MyCPAN::Indexer::Reporter::AsYAML);
 
 use Cwd qw(cwd);
 use File::Basename qw(dirname);
@@ -16,36 +16,35 @@ use File::Path qw(mkpath);
 use File::Temp qw(tempdir);
 use File::Spec::Functions qw(catfile rel2abs);
 
-$VERSION = '1.22';
+$VERSION = '1.27';
 
 =head1 NAME
 
-MyCPAN::App::Indexer::DPAN - Create a D(ark)PAN out of the indexed distributions
+MyCPAN::App::DPAN::Reporter::AsYAML - Record the indexing results as YAML
 
 =head1 SYNOPSIS
 
-	use MyCPAN::Indexer;
+Use this in the dpan config by specifying it as the reporter class:
+
+	# in dpan.config
+	reporter_class  MyCPAN::App::DPAN::Reporter::AsYAML
 
 =head1 DESCRIPTION
 
-This module implements the indexer_class and reporter_class components
-to allow C<backpan_indexer.pl> to create a CPAN-like directory structure
-with its associated index files. This application of MyCPAN::Indexer is
-specifically aimed at creating a 02packages.details file, so it
-strives to collect a minimum of information.
-
-It runs through the indexing and prints a report at the end of the run.
+This module implements the reporter_class components to allow C<dpan>
+to create a CPAN-like directory structure with its associated index
+files. It runs through the indexing, saves the reports as YAML, and
+prints a report at the end of the run.
 
 =cut
 
 use Carp qw(croak);
-use Cwd   qw(cwd);
+use Cwd  qw(cwd);
 
 use Log::Log4perl;
 
 BEGIN {
-	$indexer_logger  = Log::Log4perl->get_logger( 'Indexer' );
-	$reporter_logger = Log::Log4perl->get_logger( 'Reporter' );
+	$logger = Log::Log4perl->get_logger( 'Reporter' );
 	}
 
 # Override the exit from the parent class so we can embed a run
@@ -53,161 +52,50 @@ BEGIN {
 # on their own to do any final processing they want.
 sub _exit { 1 }
 
-__PACKAGE__->activate( @ARGV ) unless caller;
-
-=head2 Indexer class
+=head2 Methods
 
 =over 4
 
-=item examine_dist_steps
+=item get_reporter
 
-Returns the list of techniques that C<examine_dist> should use
-to index distributions. See the documentation in
-C<MyCPAN::Indexer::examine_dist_steps>.
+Inherited from MyCPAN::App::BackPAN::Indexer
 
-For DPAN, unpack the dist, ensure you are in the dist directory,
-the find the modules.
+=item final_words
 
-=cut
-
-sub examine_dist_steps
-	{
-	my @methods = (
-		#    method                error message                  fatal
-		[ 'unpack_dist',        "Could not unpack distribution!",    1 ],
-		[ 'find_dist_dir',      "Did not find distro directory!",    1 ],
-		[ 'find_modules',       "Could not find modules!",           1 ],
-		[ 'examine_modules',    "Could not process modules!",        0 ],
-		);
-	}
-
-=item find_modules_techniques
-
-Returns the list of techniques that C<find_modules> should use
-to look for Perl module files. See the documentation in
-C<MyCPAN::Indexer::find_modules>.
-
-=cut
-
-sub find_module_techniques
-	{
-	my @methods = (
-		[ 'look_in_lib',               "Guessed from looking in lib/"      ],
-		[ 'look_in_cwd',               "Guessed from looking in cwd"       ],
-		[ 'look_in_meta_yml_provides', "Guessed from looking in META.yml"  ],
-		[ 'look_for_pm',               "Guessed from looking in cwd"       ],
-		);
-	}
-
-=item get_module_info_tasks
-
-Returns the list of techniques that C<get_module_info> should use
-to extract data from Perl module files. See the documentation in
-C<MyCPAN::Indexer::get_module_info>.
-
-=cut
-
-sub get_module_info_tasks
-	{
-	(
-	[ 'extract_module_namespaces',   'Extract the namespaces a file declares' ],
-	[ 'extract_module_version',      'Extract the version of the module'      ],
-	)
-	}
-
-=item setup_run_info
-
-Like C<setup_run_info> in C<MyCPAN::Indexer>, but it remembers fewer
-things. The DarkPAN census really just cares about finding packages,
-so the details about the run aren't as interesting.
-
-=cut
-
-sub setup_run_info
-	{
-#	TRACE( sub { get_caller_info } );
-
-	$_[0]->set_run_info( 'root_working_dir', cwd()   );
-	$_[0]->set_run_info( 'run_start_time',   time    );
-	$_[0]->set_run_info( 'completed',        0       );
-	$_[0]->set_run_info( 'pid',              $$      );
-	$_[0]->set_run_info( 'ppid',             $_[0]->getppid );
-
-	$_[0]->set_run_info( 'indexer',          ref $_[0] );
-	$_[0]->set_run_info( 'indexer_versions', $_[0]->VERSION );
-
-	return 1;
-	}
-
-
-=item setup_dist_info
-
-Like C<setup_dist_info> in C<MyCPAN::Indexer>, but it remembers fewer
-things. The test census really just cares about statements in the test
-files, so the details about the distribution aren't as interesting.
-
-=cut
-
-sub setup_dist_info
-	{
-#	TRACE( sub { get_caller_info } );
-
-	my( $self, $dist ) = @_;
-
-	$indexer_logger->debug( "Setting dist [$dist]\n" );
-	$self->set_dist_info( 'dist_file',     $dist                   );
-
-	return 1;
-	}
-
-=back
-
-=head2 Reporter class
-
-=over 4
-
-=item get_reporter( $Notes )
-
-Inherited for MyCPAN::App::BackPAN::Indexer
-
-=item final_words( $Notes )
-
-C<get_reporter> sets the C<reporter> key in the C<$Notes> hash reference. The
-value is a code reference that takes the information collected about a distribution
-and counts the modules used in the test files.
-
-See L<MyCPAN::Indexer::Tutorial> for details about what C<get_reporter> expects
-and should do.
+Creates the F<02packages.details.txt.gz> and F<CHECKSUMS> files once
+C<dpan> has analysed every distribution.
 
 =cut
 
 sub final_words
 	{
 	# This is where I want to write 02packages and CHECKSUMS
-	my( $class, $Notes ) = @_;
+	my( $self ) = @_;
 
-	$reporter_logger->trace( "Final words from the DPAN Reporter" );
+	$logger->trace( "Final words from the DPAN Reporter" );
 
-	my $report_dir = $Notes->{config}->success_report_subdir;
-	$reporter_logger->debug( "Report dir is $report_dir" );
+	my $report_dir = $self->get_config->success_report_subdir;
+	$logger->debug( "Report dir is $report_dir" );
 
 	opendir my($dh), $report_dir or
-		$reporter_logger->fatal( "Could not open directory [$report_dir]: $!");
+		$logger->fatal( "Could not open directory [$report_dir]: $!");
 
 	my %dirs_needing_checksums;
 
 	require CPAN::PackageDetails;
 	my $package_details = CPAN::PackageDetails->new;
 
-	$reporter_logger->info( "Creating index files" );
+	$logger->info( "Creating index files" );
 
+	$self->_init_skip_package_from_config;
+	
 	require version;
 	foreach my $file ( readdir( $dh ) )
 		{
 		next unless $file =~ /\.yml\z/;
-		$reporter_logger->debug( "Processing output file $file" );
+		$logger->debug( "Processing output file $file" );
 		my $yaml = eval { YAML::LoadFile( catfile( $report_dir, $file ) ) } or do {
-			$reporter_logger->error( "$file: $@" );
+			$logger->error( "$file: $@" );
 			next;
 			};
 
@@ -250,13 +138,13 @@ been the version for another package. For example:
 
 			( my $version_variable = $module->{version_info}{identifier} || '' )
 				=~ s/(?:\:\:)?VERSION$//;
-			$reporter_logger->debug( "Package from version variable is $version_variable" );
+			$logger->debug( "Package from version variable is $version_variable" );
 
 			PACKAGE: foreach my $package ( @$packages )
 				{
 				if( $version_variable && $version_variable ne $package )
 					{
-					$reporter_logger->debug( "Skipping package [$package] since version variable [$version_variable] is in a different package" );
+					$logger->debug( "Skipping package [$package] since version variable [$version_variable] is in a different package" );
 					next;
 					}
 
@@ -267,9 +155,9 @@ been the version for another package. For example:
 
 				$path =~ s|\\+|/|g; # no windows paths.
 
-				if( $class->skip_package( $package ) )
+				if( $self->skip_package( $package ) )
 					{
-					$reporter_logger->debug( "Skipping $package: excluded by config" );
+					$logger->debug( "Skipping $package: excluded by config" );
 					next PACKAGE;
 					}
 
@@ -282,8 +170,17 @@ been the version for another package. For example:
 			}
 		}
 
+	$self->_create_index_files( $package_details, [ keys %dirs_needing_checksums ] );
+	
+	1;
+	}
+
+sub _create_index_files
+	{
+	my( $self, $package_details, $dirs_needing_checksums ) = @_;
+	
 	my $index_dir = do {
-		my $d = $Notes->{config}->backpan_dir;
+		my $d = $self->get_config->backpan_dir;
 		
 		# there might be more than one if we pull from multiple sources
 		# so make the index in the first one.
@@ -296,18 +193,18 @@ been the version for another package. For example:
 
 	my $packages_file = catfile( $index_dir, '02packages.details.txt.gz' );
 
-	$reporter_logger->info( "Writing 02packages.details.txt.gz" );	
+	$logger->info( "Writing 02packages.details.txt.gz" );	
 	$package_details->write_file( $packages_file );
 
-	$reporter_logger->info( "Writing 03modlist.txt.gz" );	
-	$class->create_modlist( $index_dir );
+	$logger->info( "Writing 03modlist.txt.gz" );	
+	$self->create_modlist( $index_dir );
 
-	$reporter_logger->info( "Creating CHECKSUMS files" );	
-	$class->create_checksums( [ keys %dirs_needing_checksums ] );
-
+	$logger->info( "Creating CHECKSUMS files" );	
+	$self->create_checksums( $dirs_needing_checksums );
+	
 	1;
 	}
-
+	
 =item guess_package_name
 
 Given information about the module, make a guess about which package
@@ -321,7 +218,7 @@ sub guess_package_name
 	{
 	my( $self, $module_info ) = @_;
 
-
+	
 	}
 
 =item get_package_version( MODULE_INFO, PACKAGE )
@@ -344,24 +241,50 @@ sub get_package_version
 
 Returns true if the indexer should ignore PACKAGE.
 
-By default, this skips the Perl special packages:
+By default, this skips the Perl special packages specified by the
+ignore_packages configuration. By default, ignore packages is:
 
 	main
-	MY
+	MY 
 	MM
 	DB
 	bytes
+	DynaLoader
 
-There isn't a way to configure additional packages yet.
+To set a different list, configure ignore_packages with a space
+separated list of packages to ignore:
+
+	ignore_packages main Foo Bar::Baz Test
+
+Note that this only ignores those exact packages. You can't configure
+this with regex or wildcards (yet).
 
 =cut
 
-{
-my %skip_packages = map { $_, 1 } qw(main MY MM DB bytes);
+BEGIN {
+my $initialized = 0;
+my %skip_packages;
 
+sub _skip_package_initialized { $initialized }
+	
+sub _init_skip_package_from_config
+	{
+	my( $self ) = @_;
+	
+	%skip_packages =
+		map { $_, 1 }
+		grep { defined }
+		split /\s+/,
+		$self->get_notes( 'config' )->ignore_packages || '';
+	
+	$initialized = 1;
+	}
+	
 sub skip_package
 	{
-	exists $skip_packages{ $_[1] }
+	my( $self, $package ) = @_;
+		
+	exists $skip_packages{ $package }
 	}
 }
 
@@ -394,11 +317,11 @@ sub create_modlist
 	my( $self, $index_dir ) = @_;
 
 	my $module_list_file = catfile( $index_dir, '03modlist.data.gz' );
-	$reporter_logger->debug( "modules list file is [$module_list_file]");
+	$logger->debug( "modules list file is [$module_list_file]");
 
 	if( -e $module_list_file )
 		{
-		$reporter_logger->debug( "File [$module_list_file] already exists!" );
+		$logger->debug( "File [$module_list_file] already exists!" );
 		return 1;
 		}
 
@@ -436,8 +359,8 @@ sub create_checksums
 	foreach my $dir ( @$dirs )
 		{
 		my $rc = eval{ CPAN::Checksums::updatedir( $dir ) };
-			$reporter_logger->error( "Couldn't create CHECKSUMS for $dir: $@" ) if $@;
-			$reporter_logger->info(
+			$logger->error( "Couldn't create CHECKSUMS for $dir: $@" ) if $@;
+			$logger->info(
 				do {
 					  if(    $rc == 1 ) { "Valid CHECKSUMS file is already present" }
 					  elsif( $rc == 2 ) { "Wrote new CHECKSUMS file in $dir" }
@@ -448,22 +371,12 @@ sub create_checksums
 
 =back
 
-=head1 TO DO
-
-=over 4
-
-=item Count the lines in the files
-
-=item Code stats? Lines of code, lines of pod, lines of comments
-
-=back
-
 =head1 SOURCE AVAILABILITY
 
 This code is in Github:
 
       git://github.com/briandfoy/mycpan-indexer.git
-      git://github.com/briandfoy/mycpan-app-dpan.git
+      git://github.com/briandfoy/mycpan--app--dpan.git
 
 =head1 AUTHOR
 

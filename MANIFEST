@@ -1,6 +1,8 @@
 Changes
-lib/App-DPAN.pm
-lib/Indexer-DPAN.pm
+lib/AsYAML.pm
+lib/DPAN.pm
+lib/Indexer.pm
+lib/Minimal.pm
 LICENSE
 Makefile.PL
 MANIFEST
@@ -9,8 +11,14 @@ script/backpan_indexer.config.dpan
 script/dpan
 t/app/dpan.t
 t/compile.t
+t/create_index_files.t
+t/get_latest_module_reports.t
+t/indexer.t
+t/indexer_reports/success/Foo-Bar-0.01.txt
+t/indexer_reports/success/Foo-Bar-0.02.txt
 t/load.t
 t/pod.t
 t/pod_coverage.t
 t/test_manifest
+xt/dpan-corpus.t
 META.yml                                 Module meta-data (added by MakeMaker)
