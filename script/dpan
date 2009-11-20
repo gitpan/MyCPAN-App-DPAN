@@ -2,7 +2,7 @@
 
 use MyCPAN::App::DPAN 1.25;
 
-our $VERSION = '1.27';
+our $VERSION = '1.28';
 
 if( grep /^-?-h(elp)?$/, @ARGV ) {	
 	require Pod::Usage;
@@ -106,15 +106,27 @@ Default: 0
 =item dispatcher_class 
 
 The Perl class to use as the dispatching class. It has to at least
-provide a run method. See MyCPAN::Indexer::Tutorial for details
+provide a run method. See C<MyCPAN::Indexer::Tutorial> for details
 on dispatching classes.
 
 Default: MyCPAN::Indexer::Dispatch::Serial
 
+=item extra_reports_dir
+
+You can specify another directory that contains pre-indexed reports. C<dpan>
+will add these reports to its queue to create F<02packages.details.txt.gz>.
+So far, C<dpan> doesn't check that these reports correspond to any files 
+in the repository and could cause the checks against F<02packages.details.txt.gz>
+to fail.
+
+You probably want to use this as a way to inject information about 
+distributions that you skipped with C<skip_dists_regexes>.
+
 =item fresh_start
 
 Delete the report directory before indexing. This cleans out all previous
-work, so you need to save that on your own.
+work, so you need to save that on your own. You can also set this with
+the C<DPAN_FRESH_START> environment variable.
 
 Default: 0
 
@@ -129,7 +141,7 @@ Default: main MY MM DB bytes DynaLoader
 =item indexer_class 
 
 The Perl class to use as the indexing class. It has to at least
-provide a run method. See MyCPAN::Indexer::Tutorial for details
+provide a run method. See C<MyCPAN::Indexer::Tutorial> for details
 on indexing classes.
 
 Default: MyCPAN::App::DPAN::Indexer
@@ -143,7 +155,7 @@ Default: Joe Example <joe@example.com>
 =item interface_class 
 
 The Perl class to use as the interface class. It has to at least
-provide a run method. See MyCPAN::Indexer::Tutorial for details
+provide a run method. See C<MyCPAN::Indexer::Tutorial> for details
 on interface classes.
 
 Default: MyCPAN::Indexer::Interface::Text
@@ -174,13 +186,13 @@ The author ID to use if organize_dists is set to a true value.
 
 Default: DPAN
 
-=item queue_class MyCPAN::Indexer::Queue
+=item queue_class MyCPAN::Indexer::SomeOtherQueue
 
 The Perl class to use as the queue class. It has to at least
 provide a run method. See C<MyCPAN::Indexer::Tutorial> for details
 on queue classes.
 
-Default: MyCPAN::Indexer::Queue
+Default: MyCPAN::Indexer::SkipQueue
 
 =item reporter_class  
 
@@ -203,6 +215,27 @@ had an error. This depends on previous reports being in C<report_dir>,
 so if you don't set that configuration directive, it won't matter.
 
 Default: 1
+
+=item skip_dists_regexes
+
+You can specify a list of whitespace-separated regexes for C<dpan> to
+use to filter the queue of distributions to index. You probably want
+to use this to skip very large distributions. You can have a pre-made
+index report by setting C<extra_reports_dir>.
+
+This is only supported by C<MyCPAN::Indexer::SkipQueue>.
+
+Default: null
+
+=item skip_perl
+
+When set to a true value, C<skip_perl> cause C<dpan> to ignore distributions
+that match C</^(strawberry-?)perl-/>, since these can take a long time to 
+index. You can have a pre-made index report by setting C<extra_reports_dir>.
+
+This is only supported by C<MyCPAN::Indexer::SkipQueue>.
+
+Default: 0
 
 =item system_id macbookpro
 
@@ -248,6 +281,12 @@ separately:
 =head1 ENVIRONMENT VARIABLES
 
 =over 4
+
+=item DPAN_FRESH_START
+
+Delete the report directory before indexing. This cleans out all previous
+work, so you need to save that on your own. You can also set this with
+the C<fresh_start> configuration directive.
 
 =item DPAN_LOG4PERL_FILE
 

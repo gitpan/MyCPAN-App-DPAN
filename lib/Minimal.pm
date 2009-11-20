@@ -4,9 +4,10 @@ use warnings;
 
 use base qw(MyCPAN::Indexer::Reporter::Base);
 use vars qw($VERSION $logger);
-$VERSION = '1.27';
+$VERSION = '1.28';
 
 use Carp;
+use Cwd;
 use File::Basename;
 use File::Path;
 use File::Spec::Functions qw(catfile rel2abs);
@@ -57,6 +58,13 @@ sub get_reporter
 
 	my( $self ) = @_;
 
+	my $base_dir = $self->get_config->backpan_dir;
+	
+	if( $self->get_config->organize_dists )
+		{
+		$base_dir = catfile( $base_dir, qw(authors id) );
+		}
+	
 	my $reporter = sub {
 		my( $info ) = @_;
 
@@ -68,8 +76,11 @@ sub get_reporter
 
 		my $out_path = $self->get_report_path( $info );
 
-		open my($fh), ">", $out_path or $logger->fatal( "Could not open $out_path: $!" );
+		open my($fh), ">", $out_path or 
+			$logger->fatal( "Could not open $out_path to record report: $!" );
+
 		print $fh "# Primary package [TAB] version [TAB] dist file [newline]\n";
+		
 		MODULE: foreach my $module ( @{ $info->{dist_info}{module_info} || [] } )
 			{
 			# skip if we are ignoring those packages?
@@ -82,13 +93,18 @@ sub get_reporter
 				next MODULE;
 				}
 
+			# this should be an absolute path
+			my $dist_file = $info->{dist_info}{dist_file};
+
+			$dist_file =~ s/^.*authors.id.// if $self->get_config->organize_dists;
+			
 			$logger->warn( "No dist file for $module->{name}" )
-				unless defined $info->{dist_info}{dist_file};
+				unless defined $dist_file;
 
 			print $fh join "\t",
 				$module->{primary_package},
 				$version,
-				$info->{dist_info}{dist_file};
+				$dist_file;
 
 			print $fh "\n";
 			}
@@ -123,8 +139,10 @@ sub final_words
 
 	my %dirs_needing_checksums;
 
-	require CPAN::PackageDetails;
-	my $package_details = CPAN::PackageDetails->new;
+	use CPAN::PackageDetails 0.22;
+	my $package_details = CPAN::PackageDetails->new(
+		allow_packages_only_once => 0
+		);
 
 	$logger->info( "Creating index files" );
 
@@ -155,20 +173,17 @@ sub final_words
 				next PACKAGE;
 				}
 
-=for comment
-
-Try this before we get this far
-
-			unless( exists $dist_file )
+			if( $self->get_config->organize_dists )
 				{
-				# What directory am I in?
-				$logger->warn( "Dist file [$dist_file] not found in DPAN" );
-				next PACKAGE;
+				my $backpan_dir = ($self->get_config->backpan_dir)[0];
+				$dist_file = catfile( 
+					$backpan_dir, 
+					qw(authors id),
+					$dist_file
+					);
 				}
-=end
-
-=cut
-
+			
+			$logger->debug( "dist_file is now [$dist_file]" );
 			next PACKAGE unless -e $dist_file; # && $dist_file =~ m/^\Q$backpan_dir/;
 			my $dist_dir = dirname( $dist_file );
 			$dirs_needing_checksums{ $dist_dir }++;
@@ -192,14 +207,15 @@ Try this before we get this far
 		# Some distros declare the same package in multiple files. We
 		# only want the one with the defined or highest version
 		my %Seen;
+		no warnings;
 		my @filtered_packages =
 			grep { ! $Seen{$_->[0]}++ }
+			map { my $s = $_; $s->[1] = 'undef' unless defined $s->[1]; $s }
 			sort {
 				$a->[0] cmp $b->[0]
 					||
 				$b->[1] cmp $a->[1]  # yes, versions are strings
 				}
-			map { my $s = $_; $s->[1] = 'undef' unless defined $s->[1]; $s }
 			@packages;
 
 		foreach my $tuple ( @filtered_packages )
@@ -230,34 +246,31 @@ backpan_dir (some things might have moved around), gets the reports for
 
 sub get_latest_module_reports
 	{
-	my( $self, $directory ) = @_;
+	my( $self ) = @_;
 	$logger->info( "In get_latest_module_reports" );
 	my $report_names_by_dist_names = $self->_get_report_names_by_dist_names;
 	
 	my $all_reports = $self->_get_all_reports;
-
-	my $report_dir = $self->get_success_report_dir;
+		
 
 	my %Seen = ();
-			no warnings 'uninitialized';
+	my $report_dir = $self->get_success_report_dir;
+	
+	no warnings 'uninitialized';
 	my @files = 
 		map  { catfile( $report_dir, $_->[-1] ) }
 		grep { ! $Seen{$_->[0]}++ } 
 		map  { [ /^(.*)-(.*)\.txt\z/, $_ ] }
 		reverse 
 		sort
-		grep {
-			$logger->debug( "Passing on $_: $report_names_by_dist_names->{$_}" );
-			1;
-			}
-		grep { 
-			$logger->debug( "Considering $_: $report_names_by_dist_names->{$_}" );
-			$logger->debug( "[$report_names_by_dist_names->{$_}] exists: " . (-e $report_names_by_dist_names->{$_}) );
-			/\.txt\z/ 
-				and 
-			exists $report_names_by_dist_names->{$_}
-			} 
-		@$all_reports;
+		keys %$report_names_by_dist_names;
+		
+	my $extra_reports = $self->_get_extra_reports || [];
+	
+	push @files, @$extra_reports;
+	$logger->debug( "Adding extra reports [@$extra_reports]" );
+
+	@files;
 	}
 
 sub _get_all_reports
@@ -271,7 +284,7 @@ sub _get_all_reports
 		$logger->fatal( "Could not open directory [$report_dir]: $!");	
 	
 	my @reports = readdir( $dh );
-	
+
 	\@reports;
 	}
 
@@ -310,6 +323,32 @@ sub _get_report_names_by_dist_names
 	return \%dist_reports;
 	}
 
+sub _get_extra_reports
+	{
+	my( $self ) = @_;
+
+	return [] unless $self->get_config->exists( 'extra_reports_dir' );
+	
+	my $dir = $self->get_config->extra_reports_dir;
+	return [] unless defined $dir;
+	$logger->debug( "Extra reports directory is [$dir]" );
+
+	my $cwd = cwd();
+	$logger->debug( "Extra reports directory does not exist! Cwd is [$cwd]" )
+		unless -d $dir;
+	
+	my $glob = catfile(
+		$dir,
+		"*." . $self->get_report_file_extension
+		);
+	$logger->debug( "glob pattern is [$glob]" );
+	
+	my @reports = glob( $glob );
+	$logger->debug( "Got extra reports [@reports]" );
+	
+	return \@reports;
+	}
+	
 =item create_index_files
 
 Creates the 02packages.details.txt.gz and 03modlist.txt.gz files. If there
@@ -360,7 +399,7 @@ sub create_index_files
 	# file first, that doesn't protect us from overwriting a good 02packages
 	# with a bad one at this level.
 	{ # scope for $temp_file
-	my $temp_file = "$packages_file-$$-trial.gz";
+	my $temp_file = "$packages_file-$$-trial";
 	$logger->info( "Writing $temp_file" );	
 	$package_details->write_file( $temp_file );
 
@@ -377,15 +416,33 @@ sub create_index_files
 	# check_file
 	$dpan_dir = $dpan_authors_id if -d $dpan_authors_id;
 	$logger->debug( "Using dpan_dir => $dpan_dir" );	
-	
-	$logger->info( "Checking validity of $temp_file" );	
-	my $result = eval { $package_details->check_file( $temp_file, $dpan_dir ) } or
-		do {
 
-			my $at = $@;
-			$logger->fatal( "$temp_file has a problem and I have to abort: $at" );
-			return;
-		};
+
+	# Check the trial file for errors	
+	unless( $self->get_config->i_ignore_errors_at_my_peril )
+		{
+		$logger->info( "Checking validity of $temp_file" );
+		my $at;
+		my $result = eval { $package_details->check_file( $temp_file, $dpan_dir ) } 
+			or $at = $@;
+	
+		if( defined $at )
+			{
+			# _interpret_check_file_error can nerf an error based
+			# on configuration. Maybe you don't care about a 
+			# particular error.
+			my $error = $self->_interpret_check_file_error( $at );
+			
+			if( defined $error )
+				{
+				unlink $temp_file unless $logger->is_debug;
+				$logger->logdie( "$temp_file has a problem and I have to abort:\n".
+					"Deleting file (unless you're debugging)\n" .
+					"$error" 
+					) if defined $error;
+				}
+			}
+		}
 
 	# if we are this far, 02packages must be okay
 	unless( rename( $temp_file => $packages_file ) )
@@ -406,7 +463,44 @@ sub create_index_files
 	1;
 	}
 	
-
+sub _interpret_check_file_error
+	{
+	my( $self, $at ) = @_;
+	
+	my $error_message = do {
+		if( not ref $at ) 
+			{
+			$at;
+			}
+		# eventually this will filter the missing files and still
+		# complain for the left over ones
+		elsif( exists $at->{missing_in_file} )
+			{					
+			if( $self->get_config->ignore_missing_dists ) {
+				undef;
+				}
+			else {
+				"Some distributions in the repository do not show up in the file\n\t" .
+					join( "\n\t", @{ $at->{missing_in_file} } )
+				}
+			}
+		# eventually this will filter the missing dists and still
+		# complain for the left over ones
+		elsif( exists $at->{missing_in_repo} )
+			{
+			if( $self->get_config->ignore_extra_dists ) {
+				undef;
+				}
+			else {
+				"The file has distributions that do not appear in the repository\n\t" .
+					join( "\n\t", @{ $at->{missing_in_repo} } )
+				}
+			}
+		else { 'Unknown error!' }
+		};
+			
+	}
+	
 =item skip_package( PACKAGE )
 
 Returns true if the indexer should ignore PACKAGE.

@@ -24,6 +24,10 @@ no warnings 'redefine';
 *{"${class}::_get_all_reports"} =
 	sub { return $Mock::Reports_arrayref };
 
+# XXX: this needs better testing
+*{"${class}::_get_extra_reports"} =
+	sub { return () };
+
 *{"${class}::get_success_report_dir"} =
 	sub { 'foo' };
 }
@@ -34,6 +38,7 @@ no warnings 'redefine';
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # The reports match the dists, no extras
 {
+local $SIG{__DIE__} = sub { &confess }; use Carp qw(confess);
 $Mock::Reports_names_hashref = {
 	'Foo-Bar-1.23.txt' => 'Foo-Bar-1.23.tar.gz',
 	'Bar-4.673.txt'    => 'Bar-4.673.tar.gz',
@@ -44,10 +49,10 @@ $Mock::Reports_arrayref      = [qw(
 	Bar-4.673.txt
 	Baz-8.673.txt
 	)];
-my $expected = [ sort qw(
-	foo/Bar-4.673.txt
-	foo/Baz-8.673.txt	
-	foo/Foo-Bar-1.23.txt
+my $expected = [ sort map { catfile( 'foo', $_ ) } qw(
+	Bar-4.673.txt
+	Baz-8.673.txt	
+	Foo-Bar-1.23.txt
 	)];
 	
 my $actual = [ sort $class->$method() ];
@@ -73,10 +78,10 @@ $Mock::Reports_arrayref      = [qw(
 	Baz-8.673.txt
 	)];
 
-my $expected = [ sort qw(
-	foo/Bar-4.673.txt
-	foo/Baz-8.673.txt	
-	foo/Foo-Bar-1.23.txt
+my $expected = [ sort map { catfile( $class->get_success_report_dir, $_ ) } qw(
+	Bar-4.673.txt
+	Baz-8.673.txt	
+	Foo-Bar-1.23.txt
 	)];
 	
 my $actual = [ sort $class->$method() ];
@@ -102,10 +107,10 @@ $Mock::Reports_arrayref      = [qw(
 	Quux-999.txt
 	)];
 
-my $expected = [ sort qw(
-	foo/Bar-4.673.txt
-	foo/Baz-8.673.txt	
-	foo/Fob-Bar-1.23.txt
+my $expected = [ sort map { catfile( $class->get_success_report_dir, $_ ) } qw(
+	Bar-4.673.txt
+	Baz-8.673.txt	
+	Fob-Bar-1.23.txt
 	)];
 	
 my $actual = [ sort $class->$method() ];
@@ -126,8 +131,8 @@ $Mock::Reports_arrayref      = [qw(
 	Baz-8.673.txt
 	)];
 
-my $expected = [ sort qw(
-	foo/Baz-8.673.txt	
+my $expected = [ sort map { catfile( $class->get_success_report_dir, $_ ) } qw(
+	Baz-8.673.txt	
 	)];
 
 my $actual = [ sort $class->$method() ];
