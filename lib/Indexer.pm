@@ -16,7 +16,7 @@ use File::Path qw(mkpath);
 use File::Temp qw(tempdir);
 use File::Spec::Functions qw(catfile rel2abs);
 
-$VERSION = '1.28';
+$VERSION = '1.28_02';
 
 =head1 NAME
 
@@ -116,6 +116,7 @@ Save this feature for another time
 
 	
 	(
+	[ 'look_in_cwd_and_lib',       "Guessed from looking in lib/"      ],
 	[ 'look_in_lib',               "Guessed from looking in lib/"      ],
 	[ 'look_in_cwd',               "Guessed from looking in cwd"       ],
 	[ 'look_in_meta_yml_provides', "Guessed from looking in META.yml"  ],

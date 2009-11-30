@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               MyCPAN-App-DPAN
-version:            1.28
+version:            1.28_02
 abstract:           Create a custom, private DarkPAN repository that looks just like a real CPAN
 author:
     - brian d foy <bdfoy@cpan.org>
@@ -14,7 +14,7 @@ requires:
     CPAN::Checksums:      0
     CPAN::PackageDetails:  0.24
     Log::Log4perl:        0
-    MyCPAN::Indexer:      1.28
+    MyCPAN::Indexer:      1.28_02
     Test::Output:         0.13
     version:              0
 no_index:

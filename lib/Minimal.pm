@@ -4,13 +4,13 @@ use warnings;
 
 use base qw(MyCPAN::Indexer::Reporter::Base);
 use vars qw($VERSION $logger);
-$VERSION = '1.28';
+$VERSION = '1.28_02';
 
 use Carp;
 use Cwd;
 use File::Basename;
 use File::Path;
-use File::Spec::Functions qw(catfile rel2abs);
+use File::Spec::Functions qw(catfile rel2abs file_name_is_absolute);
 use Log::Log4perl;
 
 BEGIN {
@@ -48,18 +48,20 @@ distribution and dumps it as a YAML file.
 See L<MyCPAN::Indexer::Tutorial> for details about what
 C<get_reporter> expects and should do.
 
+If C<relative_paths_in_report> is true, the reports removes the base
+path up to I<author/id>.
+
 =cut
 
 sub get_report_file_extension { 'txt' }
 
 sub get_reporter
 	{
-	#TRACE( sub { get_caller_info } );
-
 	my( $self ) = @_;
 
+	# why is this here?
 	my $base_dir = $self->get_config->backpan_dir;
-	
+
 	if( $self->get_config->organize_dists )
 		{
 		$base_dir = catfile( $base_dir, qw(authors id) );
@@ -74,13 +76,7 @@ sub get_reporter
 			return;
 			}
 
-		my $out_path = $self->get_report_path( $info );
-
-		open my($fh), ">", $out_path or 
-			$logger->fatal( "Could not open $out_path to record report: $!" );
-
-		print $fh "# Primary package [TAB] version [TAB] dist file [newline]\n";
-		
+		my( %Found_canonical, %Current_version, @packages_to_write );
 		MODULE: foreach my $module ( @{ $info->{dist_info}{module_info} || [] } )
 			{
 			# skip if we are ignoring those packages?
@@ -92,32 +88,68 @@ sub get_reporter
 				$logger->warn( "No primary package for $module->{name}" );				
 				next MODULE;
 				}
-
+			
+			next MODULE if $Found_canonical{ $module->{primary_package} };
+			{
+			no warnings qw(uninitialized numeric);
+			next MODULE if $version < $Current_version{ $module->{primary_package} };
+			}
+			
+			$Current_version{ $module->{primary_package} } = $version;
+			$Found_canonical{ $module->{primary_package} } = 1 if
+				$module->{primary_package} eq $module->{module_name_from_file_guess};
+				
 			# this should be an absolute path
 			my $dist_file = $info->{dist_info}{dist_file};
 
-			$dist_file =~ s/^.*authors.id.// if $self->get_config->organize_dists;
+			if( $self->get_config->relative_paths_in_report )
+				{
+				# XXX: what if there isn't an authors/id?
+				$dist_file =~ s/^.*authors.id.//;
+				$dist_file =~ tr|\\|/|; # translate windows \ to Unix /, cheating
+				}
 			
 			$logger->warn( "No dist file for $module->{name}" )
 				unless defined $dist_file;
 
-			print $fh join "\t",
+			push @packages_to_write, [
 				$module->{primary_package},
 				$version,
-				$dist_file;
-
-			print $fh "\n";
+				$dist_file,
+				];
 			}
-		close $fh;
 
-		$logger->error( "$out_path is missing!" ) unless -e $out_path;
+		$self->_write_file( $info, \@packages_to_write );
 
 		1;
 		};
 
 	$self->set_note( 'reporter', $reporter );
 	}
+
+sub _write_file
+	{
+	my( $self, $info, $packages ) = @_;
 	
+	my $out_path = $self->get_report_path( $info );
+	open my($fh), ">:utf8", $out_path or 
+	$logger->fatal( "Could not open $out_path to record report: $!" );
+
+	print $fh "# Primary package [TAB] version [TAB] dist file [newline]\n";		
+	
+	foreach my $tuple ( @$packages )
+		{
+		print $fh join "\t", @$tuple;
+		print $fh "\n";
+		}
+
+	close $fh;
+
+	$logger->error( "$out_path is missing!" ) unless -e $out_path;
+	
+	return 1;	
+	}
+
 =item final_words
 
 Runs after all the reporting for all distributions has finished. This
@@ -152,8 +184,8 @@ sub final_words
 	FILE: foreach my $file ( $self->get_latest_module_reports )
 		{
 		$logger->debug( "Processing output file $file" );
-		
-		open my($fh), '<', $file or do {
+
+		open my($fh), '<:utf8', $file or do {
 			$logger->error( "Could not open [$file]: $!" );
 			next FILE;
 			};
@@ -166,26 +198,58 @@ sub final_words
 			chomp;
 			my( $package, $version, $dist_file ) = split /\t/;
 			$version = undef if $version eq 'undef';
-			
-			unless( defined $package && length $package )
+			$logger->warn( "$package has no distribution file: $file" )
+				unless defined $dist_file;
+
+			unless( defined $package && length $package  )
 				{
 				$logger->debug( "File $file line $.: no package! Line is [$_]" );
 				next PACKAGE;
 				}
 
-			if( $self->get_config->organize_dists )
+			my $full_path = $dist_file;
+
+			unless( file_name_is_absolute( $full_path ) )
 				{
 				my $backpan_dir = ($self->get_config->backpan_dir)[0];
-				$dist_file = catfile( 
-					$backpan_dir, 
-					qw(authors id),
-					$dist_file
-					);
+
+				# if we're using organize_dists, we created an authors/id
+				# directory under backpan_dir, so we have to put those
+				# three pieces together
+				if( $self->get_config->organize_dists )
+					{
+					$full_path = catfile( 
+						$backpan_dir, 
+						qw(authors id),
+						$dist_file
+						) ;
+					}
+				# otherwise, every path should be relative to $backpan_dir
+				# I'm not sure that is actually true though if backpan_dir
+				# is the current directory, and there is an authors/id
+				# under it
+				elsif( $self->get_config->relative_paths_in_report )
+					{
+					my $f1 = catfile( 
+						$backpan_dir, 
+						$dist_file
+						);
+					
+					my $f2 = catfile( 
+						$backpan_dir, 
+						qw(authors id),
+						$dist_file
+						);
+					
+					( $full_path ) = grep { -e } ( $f1, $f2 )
+					}
 				}
-			
+
 			$logger->debug( "dist_file is now [$dist_file]" );
-			next PACKAGE unless -e $dist_file; # && $dist_file =~ m/^\Q$backpan_dir/;
-			my $dist_dir = dirname( $dist_file );
+			$logger->debug( "full_path is now [$full_path]" );
+
+			next PACKAGE unless -e $full_path; # && $dist_file =~ m/^\Q$backpan_dir/;
+			my $dist_dir = dirname( $full_path );
 			$dirs_needing_checksums{ $dist_dir }++;
 
 			# broken crap that works on Unix and Windows to make cpanp
@@ -203,11 +267,12 @@ sub final_words
 			
 			push @packages, [ $package, $version, $path ];
 			}
-		
+
 		# Some distros declare the same package in multiple files. We
 		# only want the one with the defined or highest version
 		my %Seen;
 		no warnings;
+
 		my @filtered_packages =
 			grep { ! $Seen{$_->[0]}++ }
 			map { my $s = $_; $s->[1] = 'undef' unless defined $s->[1]; $s }
