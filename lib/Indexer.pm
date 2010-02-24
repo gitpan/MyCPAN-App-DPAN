@@ -10,13 +10,7 @@ use vars qw($VERSION $logger);
 # it's a problem with who's cleanup() get called
 use base qw(MyCPAN::App::BackPAN::Indexer MyCPAN::Indexer);
 
-use Cwd qw(cwd);
-use File::Basename qw(dirname);
-use File::Path qw(mkpath);
-use File::Temp qw(tempdir);
-use File::Spec::Functions qw(catfile rel2abs);
-
-$VERSION = '1.28_07';
+$VERSION = '1.28_11';
 
 =head1 NAME
 
@@ -38,7 +32,6 @@ It runs through the indexing and prints a report at the end of the run.
 
 =cut
 
-use Carp qw(croak);
 use Cwd  qw(cwd);
 
 use Log::Log4perl;
@@ -80,7 +73,7 @@ sub examine_dist_steps
 	);
 	}
 
-=item find_modules_techniques
+=item find_module_techniques
 
 Returns the list of techniques that C<find_modules> should use
 to look for Perl module files. See the documentation in

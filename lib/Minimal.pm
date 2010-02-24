@@ -4,7 +4,7 @@ use warnings;
 
 use base qw(MyCPAN::Indexer::Reporter::Base);
 use vars qw($VERSION $reporter_logger $collator_logger);
-$VERSION = '1.28_05';
+$VERSION = '1.28_11';
 
 use Carp;
 use Cwd;
@@ -52,6 +52,10 @@ C<get_reporter> expects and should do.
 If C<relative_paths_in_report> is true, the reports removes the base
 path up to I<author/id>.
 
+=item get_report_file_extension
+
+Returns the extension for report files.
+
 =cut
 
 sub get_report_file_extension { 'txt' }
@@ -86,6 +90,7 @@ sub get_reporter
 
 			unless( defined $module->{primary_package} )
 				{
+				no warnings 'uninitialized';
 				$reporter_logger->warn( "No primary package for $module->{name}" );
 				next MODULE;
 				}
@@ -126,7 +131,7 @@ sub get_reporter
 			}
 		else
 			{
-			$self->_write_error_file( $info );			
+			$self->_write_error_file( $info );
 			}
 		1;
 		};
@@ -166,10 +171,10 @@ sub _write_error_file
 	open my($fh), ">:utf8", $out_path or
 	$reporter_logger->fatal( "Could not open $out_path to record error report: $!" );
 
-	print $fh "ERRORS:\n", 
+	print $fh "ERRORS:\n",
 		map { sprintf "%s: %s\n", $_, $info->{run_info}{$_} || '' }
-		qw( error fatal_error );
-		
+		qw( error fatal_error extraction_error );
+
 	use Data::Dumper;
 	print $fh '-' x 73, "\n";
 	print $fh Dumper( $info );
@@ -198,7 +203,12 @@ sub get_collator
 
 	my $collator = sub {
 		$self->final_words;
-		$self->create_index_files;
+		unless( eval { $self->create_index_files } )
+			{
+			$self->set_note( 'epic_fail', $@ );
+			return;
+			}
+		return 1;
 		};
 
 	$self->set_note( $_[0]->collator_type, $collator );
@@ -240,6 +250,12 @@ sub final_words
 	FILE: foreach my $file ( $self->get_latest_module_reports )
 		{
 		$collator_logger->debug( "Processing output file $file" );
+
+		unless( -e $file )
+			{
+			$collator_logger->debug( "No success report for [$file]" );
+			next FILE;
+			}
 
 		open my($fh), '<:utf8', $file or do {
 			$collator_logger->error( "Could not open [$file]: $!" );
@@ -316,6 +332,7 @@ sub final_words
 			# in 02packages.details.txt
 			( my $path = $dist_file ) =~ s/.*authors.id.//g;
 
+			no warnings 'uninitialized';
 			$path =~ s|\\+|/|g; # no windows paths.
 
 			if( $self->skip_package( $package ) )
@@ -324,7 +341,8 @@ sub final_words
 				next PACKAGE;
 				}
 
-			push @packages, [ $package, $version, $path ];
+			push @packages, [ $package, $version, $path ]
+				if( $package and $version and $path );
 			}
 
 		# Some distros declare the same package in multiple files. We
@@ -425,10 +443,7 @@ sub _get_report_names_by_dist_names
 	my $queuer = $self->get_coordinator->get_component( 'queue' );
 
 	# these are the directories to index
-	my @dirs = do {
-		my $item = $self->get_config->dpan_dir || '';
-		split /\x00/, $item;
-		};
+	my @dirs = $self->get_config->dpan_dir;
 	$reporter_logger->debug( "Queue directories are [@dirs]" );
 
 	# This is the list of distributions in the indexed directories
@@ -494,7 +509,7 @@ sub create_index_files
 
 		# there might be more than one if we pull from multiple sources
 		# so make the index in the first one.
-		my $abs = rel2abs( ref $d ? $d->[0] : $d );
+		my $abs = rel2abs( $d );
 		$abs =~ s/authors.id.*//;
 		catfile( $abs, 'modules' );
 		};
@@ -752,6 +767,19 @@ sub update_whois
 	require MyCPAN::App::DPAN::CPANUtils;
 
 	my $success = 0;
+
+	# no matter the situation, start over. I don't like this situation
+	# so much, but it's more expedient then parsing the xml file to look
+	# for missing users
+	unlink map { my $f = catfile(
+		$self->get_config->dpan_dir,
+		'authors',
+		MyCPAN::App::DPAN::CPANUtils->$_()
+		);
+
+		$f;
+		} qw( mailrc_filename whois_filename );
+
 	if( $self->get_config->use_real_whois )
 		{
 		my $result = MyCPAN::App::DPAN::CPANUtils->pull_latest_whois(
@@ -980,6 +1008,8 @@ sub create_checksums
 =back
 
 =head1 TO DO
+
+How much time do you have?
 
 =head1 SOURCE AVAILABILITY
 
